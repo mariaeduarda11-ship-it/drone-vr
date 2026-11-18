@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Drone em Realidade Virtual – Nuvem de Pontos</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #10141c; color: #e8ecf3;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas { display: block; }
+  #painel { position: absolute; top: 12px; left: 12px; width: 300px; max-height: calc(100% - 24px); overflow-y: auto;
+    background: rgba(16, 20, 28, 0.88); border: 1px solid #2a3242; border-radius: 12px; padding: 14px 16px; z-index: 10;
+    backdrop-filter: blur(6px); }
+  #painel.fechado { display: none; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { font-size: 12px; color: #9aa6b8; margin: 0 0 12px; }
+  .bloco { margin: 12px 0; }
+  .rotulo { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8b97aa; margin-bottom: 6px; }
+  .grupo { display: flex; gap: 6px; }
+  button, .arquivo { flex: 1; background: #222a38; color: #e8ecf3; border: 1px solid #344057; border-radius: 8px;
+    padding: 8px 6px; font-size: 13px; cursor: pointer; text-align: center; }
+  button.ativo { background: #2f6fed; border-color: #2f6fed; }
+  .arquivo { display: block; background: #1d6b4a; border-color: #23885d; font-weight: 600; }
+  input[type=file] { display: none; }
+  input[type=range] { width: 100%; }
+  label.chk { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 6px 0; cursor: pointer; }
+  select { width: 100%; background: #222a38; color: #e8ecf3; border: 1px solid #344057; border-radius: 8px; padding: 6px; }
+  #info { font-size: 13px; line-height: 1.5; color: #c9d2df; }
+  #medida { font-size: 20px; font-weight: 700; color: #ffd34d; min-height: 26px; }
+  #legenda .barra { height: 12px; border-radius: 6px;
+    background: linear-gradient(90deg, #2b5cd8, #1fb5c9, #49c25a, #f2c230, #e0412b); }
+  #legenda .marcas { display: flex; justify-content: space-between; font-size: 11px; color: #9aa6b8; margin-top: 3px; }
+  .dicas { font-size: 12px; color: #9aa6b8; line-height: 1.5; margin: 0; padding-left: 16px; }
+  #abrirPainel { position: absolute; top: 12px; left: 12px; z-index: 11; display: none; flex: none; padding: 8px 12px; }
+  #carregando { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; z-index: 20;
+    background: rgba(10, 13, 19, 0.75); font-size: 18px; }
+  #soltar { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; z-index: 19;
+    border: 4px dashed #2f6fed; background: rgba(47, 111, 237, 0.12); font-size: 22px; pointer-events: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<button id="abrirPainel">☰ Painel</button>
+<div id="painel">
+  <div style="display:flex;justify-content:space-between;align-items:start">
+    <div>
+      <h1 id="titulo">🛰️ Drone em Realidade Virtual</h1>
+      <p class="sub">Nuvem de pontos do mapeamento com drone</p>
+    </div>
+    <button id="fecharPainel" style="flex:none;padding:4px 9px">✕</button>
+  </div>
+
+  <div class="bloco">
+    <label class="arquivo">📂 Abrir nuvem de pontos
+      <input type="file" id="arquivo" accept=".las,.ply,.xyz,.txt,.csv,.pts">
+    </label>
+    <div class="sub" style="margin-top:6px">.LAS, .PLY, .XYZ, .TXT ou .CSV. Também dá para arrastar o arquivo para a tela.</div>
+    <button id="demo" style="width:100%">🏘️ Carregar bairro de exemplo</button>
+  </div>
+
+  <div class="bloco">
+    <div class="rotulo">Cores</div>
+    <div class="grupo">
+      <button id="corReal">Fotos (RGB)</button>
+      <button id="corAltura">Por altura</button>
+    </div>
+  </div>
+
+  <div class="bloco" id="legenda">
+    <div class="rotulo">Altura acima do chão</div>
+    <div class="barra"></div>
+    <div class="marcas"><span id="l0">0 m</span><span id="l1"></span><span id="l2"></span></div>
+  </div>
+
+  <div class="bloco">
+    <div class="rotulo">Modo de visualização</div>
+    <div class="grupo">
+      <button id="modoMaquete">🧱 Maquete</button>
+      <button id="modoReal">🚶 Tamanho real</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="girar"> Girar a maquete devagar</label>
+  </div>
+
+  <div class="bloco">
+    <div class="rotulo">Tamanho dos pontos</div>
+    <input type="range" id="tamanho" min="0.3" max="4" step="0.1" value="1">
+  </div>
+
+  <div class="bloco">
+    <div class="rotulo">Exagero vertical: <span id="exagTxt">3×</span></div>
+    <input type="range" id="exagero" min="1" max="8" step="0.5" value="3">
+  </div>
+
+  <div class="bloco">
+    <div class="rotulo">Medição</div>
+    <div id="medida"></div>
+    <div class="sub" style="margin:0">Clique num telhado ou numa árvore para ver a altura dela.</div>
+  </div>
+
+  <div class="bloco">
+    <div class="rotulo">Opções avançadas</div>
+    <label class="chk"><input type="checkbox" id="zUp" checked> Eixo Z para cima (padrão de drone)</label>
+    <div class="sub" style="margin:6px 0 4px">Máximo de pontos (vale para o próximo arquivo aberto)</div>
+    <select id="maxPontos">
+      <option value="500000">500 mil (celular)</option>
+      <option value="1500000" selected>1,5 milhão (Quest / notebook)</option>
+      <option value="3000000">3 milhões</option>
+      <option value="6000000">6 milhões (PC potente)</option>
+    </select>
+  </div>
+
+  <div class="bloco">
+    <div class="rotulo">Dados</div>
+    <div id="info">—</div>
+  </div>
+
+  <div class="bloco">
+    <div class="rotulo">Como usar</div>
+    <ul class="dicas">
+      <li><b>Mouse:</b> arraste para girar, roda para zoom, botão direito para mover.</li>
+      <li><b>Óculos VR:</b> toque em <i>ENTER VR</i> (embaixo da tela).</li>
+      <li><b>No VR:</b> analógico esquerdo anda, direito gira e sobe/desce, gatilho mede a altura, botão lateral (grip) troca maquete ↔ tamanho real.</li>
+    </ul>
+  </div>
+</div>
+<div id="carregando">Carregando…</div>
+<div id="soltar">Solte o arquivo da nuvem de pontos aqui</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+
+// ====================== CONFIGURAÇÃO ======================
+// Arquivo que abre automaticamente ao entrar na página (coloque-o na pasta "dados").
+// Também dá para escolher pela URL: index.html?arquivo=dados/outro.las
+const CONFIG = {
+  arquivoPadrao: 'dados/nuvem.las',
+  exageroVertical: 3,   // multiplica as alturas para o relevo aparecer melhor na maquete
+  girarAoIniciar: true, // a maquete fica girando devagar
+  titulo: 'Mapeamento com drone em realidade virtual',
+};
+// ==========================================================
+
+const TABLE_H = 0.8;     // altura da mesa da maquete (m)
+const MAQ_Z = -1.3;      // distância da maquete à frente do usuário (m)
+const MAQ_SIZE = 1.6;    // largura da maquete (m)
+
+const $ = (id) => document.getElementById(id);
+let cloud = null;        // { points, heights, rgb, extent, maxH, baseSize, n }
+let lastRaw = null;      // dados brutos, para reconstruir ao trocar o eixo
+let colorMode = 'rgb';
+let mode = 'maquete';
+let sizeMul = 1;
+let modelScale = 1;
+let exagero = CONFIG.exageroVertical;
+$('titulo').textContent = '🛰️ ' + CONFIG.titulo;
+$('exagero').value = exagero; $('exagTxt').textContent = exagero + '×';
+$('girar').checked = CONFIG.girarAoIniciar;
+
+// ---------- cena ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+document.body.appendChild(VRButton.createButton(renderer));
+
+const scene = new THREE.Scene();
+scene.background = (() => {
+  const c = document.createElement('canvas'); c.width = 2; c.height = 256;
+  const g = c.getContext('2d'); const gr = g.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0, '#0b1a3a'); gr.addColorStop(0.55, '#2d5d9a'); gr.addColorStop(1, '#9cc3e6');
+  g.fillStyle = gr; g.fillRect(0, 0, 2, 256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+scene.add(new THREE.HemisphereLight(0xdde6ff, 0x30343c, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(3, 6, 2); scene.add(sun);
+
+const rig = new THREE.Group(); scene.add(rig);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 50000);
+camera.position.set(0, 1.75, 0.4);
+rig.add(camera);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, TABLE_H, MAQ_Z);
+
+const grid = new THREE.GridHelper(40, 40, 0x3a4458, 0x232a38); scene.add(grid);
+
+// mesa da maquete
+const mesa = new THREE.Group();
+const tampo = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.04, 64),
+  new THREE.MeshStandardMaterial({ color: 0x3b4252, roughness: 0.8 }));
+tampo.position.y = TABLE_H - 0.03; mesa.add(tampo);
+const pe = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.14, TABLE_H - 0.05, 24),
+  new THREE.MeshStandardMaterial({ color: 0x2a2f3a }));
+pe.position.y = (TABLE_H - 0.05) / 2; mesa.add(pe);
+mesa.position.z = MAQ_Z; scene.add(mesa);
+
+const model = new THREE.Group(); scene.add(model);
+const medidaGrupo = new THREE.Group(); model.add(medidaGrupo);
+
+// textura redonda para os pontos
+const discTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'); g.beginPath(); g.arc(32, 32, 30, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+  return new THREE.CanvasTexture(c);
+})();
+const material = new THREE.PointsMaterial({ size: 0.01, vertexColors: true, sizeAttenuation: true,
+  map: discTex, alphaTest: 0.5, transparent: false });
+
+// ---------- escala de cores por altura ----------
+const RAMPA = [[0, 0x2b5cd8], [0.25, 0x1fb5c9], [0.5, 0x49c25a], [0.75, 0xf2c230], [1, 0xe0412b]]
+  .map(([t, h]) => [t, new THREE.Color(h)]);
+const tmpC = new THREE.Color();
+function rampa(t) {
+  t = Math.min(1, Math.max(0, t));
+  for (let i = 1; i < RAMPA.length; i++) {
+    if (t <= RAMPA[i][0]) {
+      const [t0, c0] = RAMPA[i - 1], [t1, c1] = RAMPA[i];
+      return tmpC.copy(c0).lerp(c1, (t - t0) / (t1 - t0));
+    }
+  }
+  return tmpC.copy(RAMPA[RAMPA.length - 1][1]);
+}
+
+// ---------- montar a nuvem ----------
+function buildCloud(xyz, rgb, zUp, zBase = 0) {
+  const n = Math.floor(xyz.length / 3);
+  const vi = zUp ? 2 : 1, bi = zUp ? 1 : 2;
+  const amostra = [];
+  const passo = Math.max(1, Math.floor(n / 200000));
+  let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const a = xyz[i * 3], b = xyz[i * 3 + bi];
+    if (a < minA) minA = a; if (a > maxA) maxA = a;
+    if (b < minB) minB = b; if (b > maxB) maxB = b;
+    if (i % passo === 0) amostra.push(xyz[i * 3 + vi]);
+  }
+  amostra.sort((p, q) => p - q);
+  const chao = amostra[Math.floor(amostra.length * 0.02)];
+  const topo = amostra[Math.min(amostra.length - 1, Math.floor(amostra.length * 0.995))];
+  const ca = (minA + maxA) / 2, cb = (minB + maxB) / 2;
+
+  const pos = new Float32Array(n * 3), heights = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const h = xyz[i * 3 + vi] - chao;
+    pos[i * 3] = xyz[i * 3] - ca;
+    pos[i * 3 + 1] = h;
+    pos[i * 3 + 2] = zUp ? -(xyz[i * 3 + bi] - cb) : (xyz[i * 3 + bi] - cb);
+    heights[i] = h;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+  geo.computeBoundingSphere();
+
+  if (cloud) { model.remove(cloud.points); cloud.points.geometry.dispose(); }
+  limparMedida();
+  const points = new THREE.Points(geo, material);
+  model.add(points);
+
+  const largura = Math.max(maxA - minA, maxB - minB, 1);
+  const area = Math.max((maxA - minA) * (maxB - minB), 1);
+  const espacamento = Math.sqrt(area / n);
+  cloud = { points, heights, rgb, extent: largura, maxH: Math.max(topo - chao, 1), n,
+            baseSize: Math.min(Math.max(espacamento * 1.8, 0.02), 2),
+            larguraX: maxA - minA, larguraY: maxB - minB, altBase: chao + zBase };
+
+  if (!rgb) colorMode = 'altura';
+  atualizarCores();
+  aplicarModo();
+  atualizarInfo();
+}
+
+function atualizarCores() {
+  if (!cloud) return;
+  const col = cloud.points.geometry.attributes.color.array;
+  const { heights, rgb, maxH, n } = cloud;
+  if (colorMode === 'rgb' && rgb) {
+    for (let i = 0; i < n * 3; i++) col[i] = rgb[i] / 255;
+  } else {
+    for (let i = 0; i < n; i++) {
+      const c = rampa(heights[i] / maxH);
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    }
+  }
+  cloud.points.geometry.attributes.color.needsUpdate = true;
+  $('corReal').classList.toggle('ativo', colorMode === 'rgb');
+  $('corAltura').classList.toggle('ativo', colorMode === 'altura');
+  $('corReal').disabled = !rgb;
+  $('corReal').style.opacity = rgb ? 1 : 0.4;
+  $('legenda').style.display = colorMode === 'altura' ? 'block' : 'none';
+  $('l1').textContent = (maxH / 2).toFixed(1) + ' m';
+  $('l2').textContent = maxH.toFixed(1) + ' m';
+}
+
+function aplicarModo() {
+  if (!cloud) return;
+  if (mode === 'maquete') {
+    modelScale = MAQ_SIZE / cloud.extent;
+    model.position.set(0, TABLE_H + 0.005, MAQ_Z);
+    mesa.visible = true; grid.visible = true;
+  } else {
+    modelScale = 1;
+    model.rotation.y = 0;
+    model.position.set(0, -alturaLocal(0, 0) * exagero, 0);  // o usuário começa em pé no chão
+    mesa.visible = false; grid.visible = false;
+  }
+  model.scale.set(modelScale, modelScale * exagero, modelScale);
+  atualizarTamanho();
+  if (!renderer.xr.isPresenting) posicionarCameraDesktop();
+  $('modoMaquete').classList.toggle('ativo', mode === 'maquete');
+  $('modoReal').classList.toggle('ativo', mode === 'real');
+  limparMedida();
+}
+
+function alturaLocal(x, z) {
+  // altura mediana dos pontos perto de (x, z), em coordenadas do modelo
+  const pos = cloud.points.geometry.attributes.position.array, hs = [];
+  for (let r = 10; r <= 160 && hs.length < 20; r *= 2) {
+    hs.length = 0;
+    for (let i = 0; i < cloud.n; i++) {
+      const dx = pos[i * 3] - x, dz = pos[i * 3 + 2] - z;
+      if (dx * dx + dz * dz < r * r) hs.push(cloud.heights[i]);
+    }
+  }
+  if (!hs.length) return 0;
+  hs.sort((a, b) => a - b);
+  return hs[Math.floor(hs.length / 2)];
+}
+
+function posicionarCameraDesktop() {
+  if (mode === 'maquete') {
+    camera.position.set(0, 1.75, 0.4);
+    controls.target.set(0, TABLE_H, MAQ_Z);
+  } else {
+    const e = cloud.extent, y0 = model.position.y;
+    camera.position.set(0, y0 + e * 0.45, e * 0.6);
+    controls.target.set(0, y0, 0);
+  }
+  controls.update();
+}
+
+function atualizarTamanho() {
+  if (!cloud) return;
+  material.size = cloud.baseSize * sizeMul * modelScale;
+  raycaster.params.Points.threshold = material.size * 0.8;
+}
+
+function atualizarInfo() {
+  if (!cloud) return;
+  $('info').innerHTML =
+    `<b>${cloud.n.toLocaleString('pt-BR')}</b> pontos<br>` +
+    `Área: ${cloud.larguraX.toFixed(0)} m × ${cloud.larguraY.toFixed(0)} m<br>` +
+    `Desnível: ~${cloud.maxH.toFixed(1)} m (do ponto mais baixo ao mais alto)<br>` +
+    `Altitude: ${cloud.altBase.toFixed(1)} m a ${(cloud.altBase + cloud.maxH).toFixed(1)} m`;
+}
+
+// ---------- medição de altura ----------
+const raycaster = new THREE.Raycaster();
+function limparMedida() {
+  while (medidaGrupo.children.length) {
+    const o = medidaGrupo.children.pop();
+    o.geometry?.dispose(); o.material?.map?.dispose(); o.material?.dispose();
+  }
+  $('medida').textContent = '';
+}
+
+function criarRotulo(texto) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 160;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(10,14,22,0.88)';
+  g.beginPath(); g.roundRect(8, 8, 496, 144, 36); g.fill();
+  g.strokeStyle = '#ffd34d'; g.lineWidth = 6; g.stroke();
+  g.fillStyle = '#ffd34d'; g.font = 'bold 88px system-ui, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(texto, 256, 84);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  sp.renderOrder = 999;
+  return sp;
+}
+
+function medir() {
+  if (!cloud) return;
+  const hits = raycaster.intersectObject(cloud.points);
+  if (!hits.length) return;
+  const idx = hits[0].index;
+  const h = cloud.heights[idx];
+  const p = model.worldToLocal(hits[0].point.clone());
+  p.y = h;
+  limparMedida();
+
+  // tamanho do rótulo em metros "do mundo", convertido para a escala do modelo
+  const larguraMundo = mode === 'maquete' ? 0.16 : Math.min(Math.max(cloud.extent * 0.03, 1.5), 12);
+  const L = larguraMundo / modelScale;
+
+  const linha = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(p.x, 0, p.z), new THREE.Vector3(p.x, p.y, p.z)]),
+    new THREE.LineBasicMaterial({ color: 0xffd34d, depthTest: false }));
+  linha.renderOrder = 998;
+  const bola = new THREE.Mesh(new THREE.SphereGeometry(L * 0.04, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffd34d, depthTest: false }));
+  bola.position.copy(p); bola.scale.y = 1 / exagero; bola.renderOrder = 998;
+  const rot = criarRotulo(`${h.toFixed(1)} m`);
+  rot.scale.set(L, L * 160 / 512 / exagero, 1);
+  rot.position.set(p.x, p.y + L * 0.3 / exagero, p.z);
+  medidaGrupo.add(linha, bola, rot);
+  $('medida').innerHTML = `${h.toFixed(1)} m <span style="font-size:13px;color:#c9d2df;font-weight:400">acima do ponto mais baixo<br>altitude ${(cloud.altBase + h).toFixed(1)} m</span>`;
+}
+
+// clique no desktop (sem arrastar)
+let down = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!down) return;
+  const d = Math.hypot(e.clientX - down[0], e.clientY - down[1]); down = null;
+  if (d > 6) return;
+  const m = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(m, camera);
+  medir();
+});
+
+// ---------- controles de VR ----------
+const fabrica = new XRControllerModelFactory();
+const tmpM = new THREE.Matrix4();
+for (let i = 0; i < 2; i++) {
+  const ctrl = renderer.xr.getController(i);
+  const raio = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]),
+    new THREE.LineBasicMaterial({ color: 0xffd34d }));
+  raio.scale.z = 5; ctrl.add(raio);
+  ctrl.addEventListener('selectstart', () => {
+    tmpM.identity().extractRotation(ctrl.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM);
+    raycaster.camera = camera;
+    medir();
+  });
+  ctrl.addEventListener('squeezestart', () => { mode = mode === 'maquete' ? 'real' : 'maquete'; aplicarModo(); rig.position.set(0, 0, 0); });
+  rig.add(ctrl);
+  const grip = renderer.xr.getControllerGrip(i);
+  grip.add(fabrica.createControllerModel(grip));
+  rig.add(grip);
+}
+renderer.xr.addEventListener('sessionstart', () => { rig.position.set(0, 0, 0); rig.rotation.set(0, 0, 0); });
+renderer.xr.addEventListener('sessionend', () => { rig.position.set(0, 0, 0); rig.rotation.set(0, 0, 0); if (cloud) posicionarCameraDesktop(); });
+
+const relogio = new THREE.Clock();
+const dir = new THREE.Vector3(), lado = new THREE.Vector3(), CIMA = new THREE.Vector3(0, 1, 0);
+let giroTravado = false;
+function locomocao(dt) {
+  const s = renderer.xr.getSession(); if (!s) return;
+  const vel = mode === 'real' ? 5 : 0.5;
+  for (const src of s.inputSources) {
+    const gp = src.gamepad; if (!gp || gp.axes.length < 2) continue;
+    const x = gp.axes.length >= 4 ? gp.axes[2] : gp.axes[0];
+    const y = gp.axes.length >= 4 ? gp.axes[3] : gp.axes[1];
+    if (src.handedness === 'right') {
+      if (Math.abs(x) > 0.6 && !giroTravado) { rig.rotation.y -= Math.sign(x) * Math.PI / 6; giroTravado = true; }
+      if (Math.abs(x) < 0.3) giroTravado = false;
+      if (Math.abs(y) > 0.2) rig.position.y = Math.max(0, rig.position.y - y * vel * dt);
+    } else {
+      if (Math.abs(x) < 0.15 && Math.abs(y) < 0.15) continue;
+      camera.getWorldDirection(dir); dir.y = 0; dir.normalize();
+      lado.crossVectors(dir, CIMA).normalize();
+      rig.position.addScaledVector(dir, -y * vel * dt).addScaledVector(lado, x * vel * dt);
+    }
+  }
+}
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(relogio.getDelta(), 0.1);
+  if (renderer.xr.isPresenting) locomocao(dt); else controls.update();
+  if (mode === 'maquete' && $('girar').checked) model.rotation.y += dt * 0.15;
+  renderer.render(scene, camera);
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- leitores de arquivo ----------
+function maxPontos() { return parseInt($('maxPontos').value, 10); }
+
+function lerLAS(buf) {
+  const dv = new DataView(buf);
+  const assinatura = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+  if (assinatura !== 'LASF') throw new Error('Arquivo não parece ser LAS válido.');
+  const versaoMenor = dv.getUint8(25);
+  const inicio = dv.getUint32(96, true);
+  const fmtBruto = dv.getUint8(104);
+  if (fmtBruto & 0xC0) throw new Error('Este LAS está comprimido (LAZ). Exporte como .LAS sem compressão (CloudCompare: Salvar como → LAS).');
+  const fmt = fmtBruto & 0x3F;
+  const tamReg = dv.getUint16(105, true);
+  let n = dv.getUint32(107, true);
+  if (versaoMenor >= 4 && n === 0) n = Number(dv.getBigUint64(247, true));
+  n = Math.min(n, Math.floor((buf.byteLength - inicio) / tamReg));
+  const sx = dv.getFloat64(131, true), sy = dv.getFloat64(139, true), sz = dv.getFloat64(147, true);
+  const ox = dv.getFloat64(155, true), oy = dv.getFloat64(163, true), oz = dv.getFloat64(171, true);
+  const cx = (dv.getFloat64(179, true) + dv.getFloat64(187, true)) / 2;
+  const cy = (dv.getFloat64(195, true) + dv.getFloat64(203, true)) / 2;
+  const cz = dv.getFloat64(219, true);
+  const offCor = { 2: 20, 3: 28, 5: 28, 7: 30, 8: 30, 10: 30 }[fmt];
+
+  const passo = Math.max(1, Math.ceil(n / maxPontos()));
+  const m = Math.ceil(n / passo);
+  const xyz = new Float32Array(m * 3);
+  const rgb16 = offCor !== undefined ? new Uint16Array(m * 3) : null;
+  let k = 0, maxCor = 0;
+  for (let i = 0; i < n && k < m; i += passo, k++) {
+    const o = inicio + i * tamReg;
+    xyz[k * 3] = dv.getInt32(o, true) * sx + ox - cx;
+    xyz[k * 3 + 1] = dv.getInt32(o + 4, true) * sy + oy - cy;
+    xyz[k * 3 + 2] = dv.getInt32(o + 8, true) * sz + oz - cz;
+    if (rgb16) {
+      const r = dv.getUint16(o + offCor, true), g = dv.getUint16(o + offCor + 2, true), b = dv.getUint16(o + offCor + 4, true);
+      rgb16[k * 3] = r; rgb16[k * 3 + 1] = g; rgb16[k * 3 + 2] = b;
+      if (r > maxCor) maxCor = r; if (g > maxCor) maxCor = g; if (b > maxCor) maxCor = b;
+    }
+  }
+  let rgb = null;
+  if (rgb16 && maxCor > 0) {
+    rgb = new Uint8Array(k * 3);
+    const div = maxCor > 255 ? 257 : 1;
+    for (let i = 0; i < k * 3; i++) rgb[i] = rgb16[i] / div;
+  }
+  return { xyz: xyz.subarray(0, k * 3), rgb, zBase: cz };
+}
+
+function lerPLY(buf) {
+  const geo = new PLYLoader().parse(buf);
+  const p = geo.attributes.position.array, c = geo.attributes.color?.array;
+  const n = p.length / 3;
+  const passo = Math.max(1, Math.ceil(n / maxPontos()));
+  const m = Math.ceil(n / passo);
+  const xyz = new Float32Array(m * 3), rgb = c ? new Uint8Array(m * 3) : null;
+  let k = 0;
+  for (let i = 0; i < n && k < m; i += passo, k++) {
+    xyz[k * 3] = p[i * 3]; xyz[k * 3 + 1] = p[i * 3 + 1]; xyz[k * 3 + 2] = p[i * 3 + 2];
+    if (rgb) { rgb[k * 3] = c[i * 3] * 255; rgb[k * 3 + 1] = c[i * 3 + 1] * 255; rgb[k * 3 + 2] = c[i * 3 + 2] * 255; }
+  }
+  geo.dispose();
+  return { xyz: xyz.subarray(0, k * 3), rgb: rgb ? rgb.subarray(0, k * 3) : null };
+}
+
+function lerTexto(buf) {
+  const linhas = new TextDecoder().decode(buf).split(/\r?\n/);
+  const passo = Math.max(1, Math.ceil(linhas.length / maxPontos()));
+  const xyz = [], cor = [];
+  let o = null, maxCor = 0;
+  for (let i = 0; i < linhas.length; i += passo) {
+    const v = linhas[i].trim().split(/[\s,;]+/);
+    if (v.length < 3) continue;
+    const x = +v[0], y = +v[1], z = +v[2];
+    if (!isFinite(x) || !isFinite(y) || !isFinite(z)) continue;
+    if (!o) o = [x, y, z];
+    xyz.push(x - o[0], y - o[1], z - o[2]);
+    if (v.length >= 6) {
+      const c = v.length >= 7 ? v.slice(4, 7) : v.slice(3, 6);
+      for (const s of c) { const q = +s || 0; cor.push(q); if (q > maxCor) maxCor = q; }
+    }
+  }
+  let rgb = null;
+  if (cor.length === xyz.length && maxCor > 0) {
+    const f = maxCor <= 1 ? 255 : maxCor > 255 ? 1 / 257 : 1;
+    rgb = new Uint8Array(cor.map((q) => q * f));
+  }
+  return { xyz: new Float32Array(xyz), rgb, zBase: o ? o[2] : 0 };
+}
+
+async function abrirBuffer(buf, nome) {
+  mostrarCarregando(`Processando ${nome}…`);
+  await new Promise((r) => setTimeout(r, 40));
+  try {
+    const ext = nome.split('.').pop().toLowerCase().split('?')[0];
+    let dados;
+    if (ext === 'las') dados = lerLAS(buf);
+    else if (ext === 'laz') throw new Error('Arquivos .LAZ (comprimidos) não são lidos aqui. Converta para .LAS no CloudCompare.');
+    else if (ext === 'ply') dados = lerPLY(buf);
+    else dados = lerTexto(buf);
+    if (!dados.xyz.length) throw new Error('Nenhum ponto encontrado no arquivo.');
+    lastRaw = dados;
+    colorMode = dados.rgb ? 'rgb' : 'altura';
+    buildCloud(dados.xyz, dados.rgb, $('zUp').checked, dados.zBase || 0);
+  } catch (err) {
+    alert('Não foi possível abrir o arquivo:\n' + err.message);
+    console.error(err);
+  } finally {
+    esconderCarregando();
+  }
+}
+
+function mostrarCarregando(t) { $('carregando').textContent = t; $('carregando').style.display = 'flex'; }
+function esconderCarregando() { $('carregando').style.display = 'none'; }
+
+// ---------- bairro de exemplo (gerado) ----------
+function gerarDemo() {
+  let semente = 42;
+  const rnd = () => { semente |= 0; semente = (semente + 0x6D2B79F5) | 0; let t = Math.imul(semente ^ (semente >>> 15), 1 | semente);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const xyz = [], rgb = [];
+  const ponto = (x, y, z, r, g, b, v = 18) => {
+    xyz.push(x, y, z);
+    rgb.push(Math.max(0, Math.min(255, r + (rnd() - 0.5) * v)), Math.max(0, Math.min(255, g + (rnd() - 0.5) * v)), Math.max(0, Math.min(255, b + (rnd() - 0.5) * v)));
+  };
+  const L = 70; // metade do lado (bairro de 140 m)
+  const terreno = (x, y) => 0.015 * x + 0.3 * Math.sin(x / 23) * Math.cos(y / 31);
+
+  const casas = [];
+  const coresTelhado = [[178, 74, 52], [160, 60, 45], [120, 120, 125], [196, 98, 60], [90, 95, 105]];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const a of [12, 29, 46]) for (const b of [12, 29, 46]) {
+    if (sx < 0 && sy < 0) continue; // quadra da escola e praça
+    if (rnd() < 0.2) continue;      // terreno vazio
+    const w = 8 + rnd() * 4, d = 9 + rnd() * 4;
+    casas.push({ x0: sx * a - w / 2, y0: sy * b - d / 2, w, d, h: rnd() < 0.3 ? 6 : 3, telhado: 1.5 + rnd(), cor: coresTelhado[Math.floor(rnd() * coresTelhado.length)], plano: false });
+  }
+  casas.push({ x0: -50, y0: -48, w: 34, d: 14, h: 9, telhado: 0, cor: [205, 205, 200], plano: true }); // escola
+  const dentro = (x, y) => casas.some((c) => x >= c.x0 && x <= c.x0 + c.w && y >= c.y0 && y <= c.y0 + c.d);
+
+  // chão: rua, calçada, grama
+  for (let i = 0; i < 260000; i++) {
+    const x = (rnd() * 2 - 1) * L, y = (rnd() * 2 - 1) * L;
+    if (dentro(x, y)) continue;
+    const z = terreno(x, y) + (rnd() - 0.5) * 0.04;
+    const rua = Math.abs(x) < 4 || Math.abs(y) < 4 || Math.abs(Math.abs(x) - 58) < 3.5 || Math.abs(Math.abs(y) - 58) < 3.5;
+    const calcada = !rua && (Math.abs(x) < 5.5 || Math.abs(y) < 5.5);
+    if (rua) ponto(x, y, z, 70, 72, 78);
+    else if (calcada) ponto(x, y, z, 160, 155, 145);
+    else ponto(x, y, z, 92, 128, 62, 30);
+  }
+  // casas: telhados e paredes
+  for (const c of casas) {
+    const base = terreno(c.x0 + c.w / 2, c.y0 + c.d / 2);
+    const nt = Math.floor(c.w * c.d * 45);
+    for (let i = 0; i < nt; i++) {
+      const u = rnd(), v = rnd();
+      const x = c.x0 + u * c.w, y = c.y0 + v * c.d;
+      const z = base + c.h + (c.plano ? 0 : c.telhado * (1 - Math.abs(v - 0.5) * 2));
+      ponto(x, y, z, c.cor[0], c.cor[1], c.cor[2]);
+    }
+    const perim = 2 * (c.w + c.d), np = Math.floor(perim * c.h * 8);
+    for (let i = 0; i < np; i++) {
+      let t = rnd() * perim, x, y;
+      if (t < c.w) { x = c.x0 + t; y = c.y0; } else if ((t -= c.w) < c.d) { x = c.x0 + c.w; y = c.y0 + t; }
+      else if ((t -= c.d) < c.w) { x = c.x0 + t; y = c.y0 + c.d; } else { t -= c.w; x = c.x0; y = c.y0 + t; }
+      ponto(x, y, base + rnd() * c.h, 225, 215, 190);
+    }
+  }
+  // árvores
+  const arvore = (x, y) => {
+    const base = terreno(x, y), alt = 6 + rnd() * 10, r = 2 + rnd() * 3;
+    const verde = [40 + rnd() * 30, 95 + rnd() * 50, 35 + rnd() * 20];
+    for (let i = 0; i < alt * 25; i++) ponto(x + (rnd() - 0.5) * 0.4, y + (rnd() - 0.5) * 0.4, base + rnd() * (alt - r), 95, 70, 45);
+    const nc = Math.floor(r * r * 180);
+    for (let i = 0; i < nc; i++) {
+      const th = rnd() * Math.PI * 2, ph = Math.acos(1 - rnd() * 1.4), rr = r * (0.75 + rnd() * 0.25);
+      ponto(x + rr * Math.sin(ph) * Math.cos(th), y + rr * Math.sin(ph) * Math.sin(th), base + alt - r + rr * 0.85 * Math.cos(ph), verde[0], verde[1], verde[2], 35);
+    }
+  };
+  for (let i = 0; i < 28; i++) arvore(-12 - rnd() * 44, -8 - rnd() * 22);   // praça
+  for (let i = 0; i < 40; i++) {                                               // árvores de rua e quintais
+    const x = (rnd() * 2 - 1) * (L - 4), y = (rnd() * 2 - 1) * (L - 4);
+    if (!dentro(x, y) && Math.abs(x) > 6 && Math.abs(y) > 6) arvore(x, y);
+  }
+  return { xyz: new Float32Array(xyz), rgb: new Uint8Array(rgb) };
+}
+
+function carregarDemo() {
+  mostrarCarregando('Gerando bairro de exemplo…');
+  setTimeout(() => {
+    lastRaw = gerarDemo();
+    colorMode = 'rgb';
+    $('zUp').checked = true;
+    buildCloud(lastRaw.xyz, lastRaw.rgb, true);
+    esconderCarregando();
+  }, 40);
+}
+
+// ---------- interface ----------
+$('arquivo').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  mostrarCarregando(`Lendo ${f.name}…`);
+  abrirBuffer(await f.arrayBuffer(), f.name);
+  e.target.value = '';
+});
+$('demo').onclick = carregarDemo;
+$('corReal').onclick = () => { colorMode = 'rgb'; atualizarCores(); };
+$('corAltura').onclick = () => { colorMode = 'altura'; atualizarCores(); };
+$('modoMaquete').onclick = () => { mode = 'maquete'; aplicarModo(); };
+$('modoReal').onclick = () => { mode = 'real'; aplicarModo(); };
+$('tamanho').oninput = (e) => { sizeMul = parseFloat(e.target.value); atualizarTamanho(); };
+$('zUp').onchange = () => { if (lastRaw) buildCloud(lastRaw.xyz, lastRaw.rgb, $('zUp').checked, lastRaw.zBase || 0); };
+$('exagero').oninput = (e) => { exagero = parseFloat(e.target.value); $('exagTxt').textContent = exagero + '×'; aplicarModo(); };
+$('fecharPainel').onclick = () => { $('painel').classList.add('fechado'); $('abrirPainel').style.display = 'block'; };
+$('abrirPainel').onclick = () => { $('painel').classList.remove('fechado'); $('abrirPainel').style.display = 'none'; };
+
+addEventListener('dragover', (e) => { e.preventDefault(); $('soltar').style.display = 'flex'; });
+addEventListener('dragleave', (e) => { if (e.target === document.documentElement || e.clientX <= 0) $('soltar').style.display = 'none'; });
+addEventListener('drop', async (e) => {
+  e.preventDefault(); $('soltar').style.display = 'none';
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  mostrarCarregando(`Lendo ${f.name}…`);
+  abrirBuffer(await f.arrayBuffer(), f.name);
+});
+
+// ---------- início: tenta o arquivo padrão, senão mostra o exemplo ----------
+(async () => {
+  const url = new URLSearchParams(location.search).get('arquivo') || CONFIG.arquivoPadrao;
+  try {
+    mostrarCarregando('Baixando nuvem de pontos…');
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('sem arquivo');
+    await abrirBuffer(await r.arrayBuffer(), url);
+  } catch {
+    carregarDemo();
+  }
+})();
+</script>
+</body>
+</html>
